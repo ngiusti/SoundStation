@@ -4,17 +4,24 @@ A local, offline sound-effects design tool for Void Haulers. Choose a sound, sha
 controls, listen, and export game-ready WAV files. Everything is synthesised on your machine; there is no
 account, network service or audio model. Claude can drive the same engine to help you fine-tune sounds.
 
-**Status:** M0 and M1 are built, plus the CLI and a Claude (MCP) integration. The variations tray, A/B, the XY
-performance pad, the other 35 factory presets and the Windows installer are not built yet. See
-[docs/STATUS.md](docs/STATUS.md) for exactly what has been verified and what is pending.
+**Status:** M0-M3 are built (40 factory presets, five sample templates, XY performance pad), plus a desktop (Electron)
+shell with autosave recovery, the CLI and a Claude (MCP) integration. Not built yet: the variations panel and A/B
+in the app, stems, `.vhsfx.zip` archives and a relink dialog. **The Windows installer has not been built or run**:
+it needs `npm run dist:win` on a Windows machine. See [docs/STATUS.md](docs/STATUS.md) for what is verified and what is pending.
 
 ## Run it (Windows)
 
-1. Install [Node.js](https://nodejs.org) LTS (20 or newer).
-2. Double-click **`Start SFX Lab.bat`**. The first run installs dependencies, then opens the app in your browser.
+**Desktop app (recommended):** install [Node.js](https://nodejs.org) LTS (20+), then in this folder:
 
-Or from a terminal: `npm install` then `npm start`. Chrome or Edge is recommended (they can save straight into a
-folder you choose; other browsers save to Downloads).
+```
+npm install
+npm run desktop          # builds the UI and opens the desktop window
+npm run dist:win         # optional: installer + portable .exe, written to the release folder
+```
+
+**In your browser:** double-click **`Start SFX Lab.bat`** (first run installs dependencies). Chrome or Edge is best:
+they can save straight into a folder you choose; other browsers save to Downloads.
+
 
 ## First sound
 
@@ -65,7 +72,7 @@ refusing to overwrite without `--overwrite`). `--json` prints machine-readable r
 ## Develop
 
 `npm test` (unit, engine and CLI, about 30 s) · `npm run typecheck` · `npm run build` ·
-`npm run test:e2e` (needs `npm run dev` running and Chromium; drives the real UI).
+`npm run test:e2e` (needs `npm run dev` running and Chromium; drives the real UI) · `npm run test:desktop` (launches the real Electron app; on Linux run it under `xvfb-run -a`).
 
 Docs: [User guide](docs/USER_GUIDE.md) · [Architecture and deviations](docs/ARCHITECTURE.md) ·
 [Preset authoring](docs/PRESET_AUTHORING.md) · [Status and gates](docs/STATUS.md)

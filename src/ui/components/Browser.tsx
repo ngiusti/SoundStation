@@ -1,8 +1,9 @@
 import { useMemo, useRef } from "react";
 import type { Recipe } from "../../domain/schema";
 import { searchPresets } from "../../presets";
+import { SAMPLE_TEMPLATES, type SampleTemplate } from "../../presets/templates";
 
-export type Filter = "factory" | "user" | "favorites" | "recent";
+export type Filter = "factory" | "templates" | "user" | "favorites" | "recent";
 
 interface Props {
   factory: Recipe[];
@@ -17,18 +18,20 @@ interface Props {
   onFilter: (f: Filter) => void;
   onFamily: (f: string | null) => void;
   onPick: (r: Recipe) => void;
+  onPickTemplate: (t: SampleTemplate) => void;
   onFavorite: (id: string) => void;
   onDeleteUser: (id: string) => void;
   searchRef: React.RefObject<HTMLInputElement | null>;
 }
 
-const FILTERS: [Filter, string][] = [["factory", "Factory"], ["user", "My presets"], ["favorites", "Favorites"], ["recent", "Recent"]];
+const FILTERS: [Filter, string][] = [["factory", "Factory"], ["templates", "Add your recording"], ["user", "My presets"], ["favorites", "Favorites"], ["recent", "Recent"]];
 
 export function Browser(p: Props) {
   const all = useMemo(() => [...p.factory, ...p.user], [p.factory, p.user]);
   const pool = useMemo(() => {
     switch (p.filter) {
       case "factory": return p.factory;
+      case "templates": return [];
       case "user": return p.user;
       case "favorites": return all.filter((r) => p.favorites.includes(r.id));
       case "recent": return p.recent.map((id) => all.find((r) => r.id === id)).filter((r): r is Recipe => !!r);
@@ -49,6 +52,21 @@ export function Browser(p: Props) {
         <button className={"chip" + (p.family === null ? " on" : "")} aria-pressed={p.family === null} onClick={() => p.onFamily(null)}>All</button>
         {families.map((f) => <button key={f} className={"chip" + (p.family === f ? " on" : "")} aria-pressed={p.family === f} onClick={() => p.onFamily(p.family === f ? null : f)}>{f}</button>)}
       </div>
+      {p.filter === "templates" ? (
+        <ul className="cards">
+          {SAMPLE_TEMPLATES.filter((t) => !p.query || `${t.name} ${t.tags.join(" ")} ${t.description}`.toLowerCase().includes(p.query.toLowerCase())).map((t) => (
+            <li key={t.id} className="card">
+              <button className="card-main" onClick={() => p.onPickTemplate(t)}>
+                <span className="card-title">{t.name}</span>
+                <span className="card-desc">{t.description}</span>
+                <span className="card-desc"><strong>What to record:</strong> {t.record}</span>
+                <span className="badges"><span className="badge">Needs your WAV</span><span className="badge">Choose file…</span></span>
+              </button>
+            </li>
+          ))}
+          <li className="empty">No audio is included. These templates build a sound around a recording you provide (WAV, up to 60 s).</li>
+        </ul>
+      ) : (
       <ul className="cards">
         {shown.map((r, i) => (
           <li key={r.id} className={"card" + (r.id === p.currentId ? " current" : "")}>
@@ -69,6 +87,7 @@ export function Browser(p: Props) {
           </li>
         )}
       </ul>
+      )}
     </aside>
   );
 }

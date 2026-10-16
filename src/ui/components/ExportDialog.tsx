@@ -11,7 +11,8 @@ interface Props {
   onClose: () => void;
   onSettings: (patch: Partial<ExportSettings>) => void;
   onRestoreLayers: () => void;
-  onRun: (o: { variant: number; sfxPrefix: boolean; sidecar: boolean }) => Promise<string[]>;
+  onRun: (o: { variant: number; sfxPrefix: boolean; sidecar: boolean }) => Promise<{ lines: string[]; files: string[] }>;
+  onShowInFolder?: (name: string) => void;
   folderName: string | null;
   canPickFolder: boolean;
   onPickFolder: () => void;
@@ -24,14 +25,14 @@ const PROFILES: { id: string; label: string; help: string; patch: Partial<Export
   { id: "master", label: "Editable master", help: "Stereo, 48 kHz, 32-bit float. Keeps level exactly as rendered.", patch: { channels: 2, sampleRate: 48000, encoding: "float32", peakPolicy: "none", dither: false } },
 ];
 
-export function ExportDialog({ recipe, report, previewStale, onClose, onSettings, onRestoreLayers, onRun, folderName, canPickFolder, onPickFolder }: Props) {
+export function ExportDialog({ recipe, report, previewStale, onClose, onSettings, onRestoreLayers, onRun, onShowInFolder, folderName, canPickFolder, onPickFolder }: Props) {
   const s = recipe.exportDefaults;
   const loop = recipe.mode === "loop";
   const [variant, setVariant] = useState(1);
   const [sfx, setSfx] = useState(false);
   const [sidecar, setSidecar] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [results, setResults] = useState<string[] | null>(null);
+  const [results, setResults] = useState<{ lines: string[]; files: string[] } | null>(null);
   const omitted = recipe.layers.filter((l) => l.mute || (recipe.layers.some((x) => x.solo) && !l.solo));
   const fileName = `${sfx ? "SFX_" : ""}VH_${recipe.fileCategory}_${recipe.fileName}_${String(variant).padStart(3, "0")}.wav`;
 
@@ -94,10 +95,15 @@ export function ExportDialog({ recipe, report, previewStale, onClose, onSettings
             <label className="check"><input type="checkbox" checked={sidecar} onChange={(e) => setSidecar(e.target.checked)} />Also save recipe file</label>
           </div>
           <p className="filename" aria-live="polite">{fileName}</p>
-          <button className="btn primary" disabled={busy} onClick={async () => { setBusy(true); setResults(null); try { setResults(await onRun({ variant, sfxPrefix: sfx, sidecar })); } catch (e) { setResults([(e as Error).message]); } finally { setBusy(false); } }}>
+          <button className="btn primary" disabled={busy} onClick={async () => { setBusy(true); setResults(null); try { setResults(await onRun({ variant, sfxPrefix: sfx, sidecar })); } catch (e) { setResults({ lines: [(e as Error).message], files: [] }); } finally { setBusy(false); } }}>
             {busy ? "Rendering…" : omitted.length ? "Export as heard" : "Export"}
           </button>
-          {results && <ul className="results" aria-live="polite">{results.map((r) => <li key={r}>{r}</li>)}</ul>}
+          {results && (
+            <div aria-live="polite">
+              <ul className="results">{results.lines.map((r) => <li key={r}>{r}</li>)}</ul>
+              {onShowInFolder && results.files[0] && <button className="btn small" onClick={() => onShowInFolder(results.files[0])}>Show in Folder</button>}
+            </div>
+          )}
           <div className="row wrap">
             <span className="muted small">{folderName ? `Saving into the folder “${folderName}”. Existing files are never overwritten; a number is added instead.` : canPickFolder ? "No folder chosen: files go to your browser's Downloads folder." : "Your browser saves files to its Downloads folder."}</span>
             {canPickFolder && <button className="btn small" onClick={onPickFolder}>{folderName ? "Change folder" : "Choose folder"}</button>}

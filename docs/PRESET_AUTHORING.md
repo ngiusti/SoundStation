@@ -2,6 +2,9 @@
 
 A preset is a recipe (JSON validated by `src/domain/schema.ts`). Factory presets live as typed objects in `src/presets/heroes.ts` and are validated at startup, so a broken preset fails immediately. List and inspect with the CLI: `node bin/vh-sfx.mjs show-preset energy-sidearm`.
 
+## Writing factory presets
+Factory presets use the short helpers in `src/presets/dsl.ts` (`O` oscillator, `N` noise, `IMP` resonant impact, `SEQ` event sequence, `ly` layer, `mac` macro, `mp`/`oct` mappings, `P` preset). Families live in `family-a..d.ts` and `heroes.ts`. Levels are not authored by hand: run `npx tsx tools/level-presets.ts` after adding or changing a preset. It measures the peak and writes `src/presets/levels.json` (one-shots -6 dBFS, loops -16 dBFS). That is a meter-based starting level, not a listening decision. Time stretch (`timeScale`) also scales an impact's ring times, so mapping a "Damping" macro to it genuinely shortens the ring.
+
 ## Recipe essentials
 - `seed` (integer), `durationSeconds`, `mode` (`oneShot` | `loop`), `fileCategory` / `fileName` (used for `VH_{Category}_{Name}_{NNN}.wav`).
 - `layers` (1-8): `id`, `name`, `source`, `startSeconds`, `durationSeconds`, `timeScale`, `gainDb`, `pan`, `amplitudeCurve [[t,v]…]`, optional `pitchCurveSemitones`, `tremolo`, `filters`, `effects`, `spaceSendDb`.
@@ -14,6 +17,7 @@ Each macro has `value` and `defaultValue` (0-100), labels for both ends and help
 - `domain: "linear"` adds `amount` in the parameter's units (use for dB, seconds, 0-1 values).
 - `domain: "log2"` multiplies by 2^delta, `amount` in octaves (use for Hz, `timeScale`).
 - `polarity: -1` flips direction. `curve`: linear, easeIn, easeOut, smooth. Optional `min`/`max` clamp. Parameters named in `PARAM_BOUNDS` (`src/domain/mapping.ts`) are clamped to their declared domain automatically; others need explicit `min`/`max`.
+- XY pad: add `perform: { enabled, xMacro, yMacro, xCurve, yCurve }` to ship default motion (see Strained motor). Motion automates only layer `gainDb`, oscillator `source.frequencyHz` (log2) and `filters.N.cutoffHz` (log2) mappings, so give a performable macro at least one of those.
 - A macro at its `defaultValue` leaves the authored base value unchanged. Several mappings to one target must share a domain.
 - Make macros change *character*, not just volume: pair level changes with frequency, decay (`timeScale`) or filter changes.
 

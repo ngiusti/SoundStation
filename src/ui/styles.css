@@ -136,3 +136,16 @@ fieldset.mode { border: 1px solid var(--border); border-radius: var(--radius); m
   .bottombar { grid-template-columns: 1fr 1fr; } .sound-head, .export-grid { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+
+.tabs { display: flex; gap: 4px; margin: 14px 0 -6px; } .tabs button { background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); border-bottom: none; border-radius: 6px 6px 0 0; padding: 6px 16px; cursor: pointer; font: inherit; } .tabs button.on { background: var(--panel); color: var(--text); border-color: var(--border-strong); font-weight: 600; }
+.perform-section { display: block; margin-top: 0; }
+.perform-top { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: 24px; }
+.pad-wrap { display: grid; grid-template-columns: 54px 1fr; grid-template-rows: auto auto; gap: 4px; margin-top: 8px; }
+.pad { grid-column: 2; position: relative; aspect-ratio: 1 / 1; width: 100%; background: var(--bg); border: 1px solid var(--border-strong); border-radius: 8px; cursor: crosshair; touch-action: none; background-image: linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px); background-size: 25% 25%; }
+.pad.capturing { border-color: var(--danger); box-shadow: 0 0 0 2px rgba(248,113,113,.35); }
+.pad-thumb { position: absolute; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); border: 2px solid #fff; transform: translate(-50%, 50%); pointer-events: none; }
+.pad-y { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; font-size: 11px; color: var(--muted); text-align: right; } .pad-y span:nth-child(2) { color: var(--text); font-weight: 600; }
+.pad-x { grid-column: 2; grid-row: 2; display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); } .pad-x span:nth-child(2) { color: var(--text); font-weight: 600; }
+.elapsed { font-variant-numeric: tabular-nums; color: var(--danger); }
+.lanes-edit { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 14px; }
+@media (max-width: 900px) { .perform-top, .lanes-edit { grid-template-columns: 1fr; } }

@@ -1,7 +1,7 @@
 {
   "name": "vh-sfx-lab",
   "version": "1.0.0-m1",
-  "description": "Void Haulers SFX Lab - local, offline sound effect design tool",
+  "description": "Void Haulers SFX Lab - local, offline sound effects design tool",
   "private": true,
   "type": "module",
   "bin": {
@@ -16,23 +16,72 @@
     "mcp": "tsx src/mcp/server.ts",
     "start": "vite --open",
     "test:e2e": "node tests/e2e/smoke.mjs",
-    "serve": "vite preview"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.32.1",
-    "react": "^19.3.1",
-    "react-dom": "^19.3.1",
-    "zod": "^4.6.7"
+    "serve": "vite preview",
+    "desktop": "vite build && electron .",
+    "desktop:dev": "electron .",
+    "dist:win": "vite build && electron-builder --win --x64",
+    "dist:dir": "vite build && electron-builder --dir",
+    "test:desktop": "vite build && node tests/e2e/desktop.mjs"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "electron": "^44.8.0",
+    "electron-builder": "^26.15.3",
     "playwright": "^1.64.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
-    "vitest": "^5.0.5"
+    "vitest": "^5.0.5",
+    "zod": "^4.6.7"
+  },
+  "main": "desktop/main.mjs",
+  "author": "Void Haulers",
+  "build": {
+    "appId": "com.voidhaulers.sfxlab",
+    "productName": "Void Haulers SFX Lab",
+    "executableName": "VoidHaulersSFXLab",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "desktop/**",
+      "dist/**",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "VoidHaulers-SFX-Lab-${version}-${target}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    },
+    "linux": {
+      "target": [
+        "dir"
+      ]
+    }
   }
 }

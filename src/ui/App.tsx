@@ -13,7 +13,8 @@ import { RenderClient, Superseded, type RenderDone } from "./engineClient";
 import { player, seamBuffer } from "./player";
 import { initialState, isDirty, newLayer, reducer, type AppState } from "./state";
 import { ImportError, getAsset, getAssetBytes, importWav, restoreAsset } from "./assets";
-import { canPickFolder, currentFolderName, exportTarget, loadJson, loadUserPresets, pickExportFolder, safeGet, safeSet, saveFile, saveJson, saveUserPresets } from "./storage";
+import { desktop } from "./platform";
+import { canPickFolder, currentFolderName, exportTarget, initDesktop, loadJson, loadUserPresets, pickExportFolder, safeGet, safeSet, saveFile, saveJson, saveUserPresets } from "./storage";
 import { Slider } from "./components/Slider";
 import { Waveform } from "./components/Waveform";
 import { Timeline } from "./components/Timeline";
@@ -23,6 +24,8 @@ import { ExportDialog } from "./components/ExportDialog";
 import { Help, Tour } from "./components/Help";
 import { Palette, type PaletteAction } from "./components/Palette";
 import { Modal } from "./components/Modal";
+import { PerformPanel } from "./components/PerformPanel";
+import { buildTemplate, type SampleTemplate } from "../presets/templates";
 
 interface Preview {
   rev: number;
@@ -80,6 +83,7 @@ export function App() {
   const [monoCheck, setMonoCheck] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [monitorDb, setMonitorDb] = useState(player.monitorDb);
+  const [tab, setTab] = useState<"controls" | "perform">("controls");
 
   // ---- dialogs
   const [dialog, setDialog] = useState<null | "export" | "help" | "tour" | "palette" | "savePreset">(() => (safeGet("tourDone") ? null : "tour"));
@@ -89,7 +93,19 @@ export function App() {
   const [folderName, setFolderName] = useState<string | null>(currentFolderName());
   const fileInput = useRef<HTMLInputElement>(null);
   const sampleInput = useRef<HTMLInputElement>(null);
+  const templateInput = useRef<HTMLInputElement>(null);
+  const pendingTemplate = useRef<SampleTemplate | null>(null);
   const suppressAuto = useRef(true);
+
+  // ---- desktop shell: export folder, autosave recovery
+  const [recovery, setRecovery] = useState<{ id: string; time: number } | null>(null);
+  const recoveryDecided = useRef(!desktop());
+  useEffect(() => {
+    const d = desktop();
+    if (!d) return;
+    void initDesktop().then(() => setFolderName(currentFolderName()));
+    void d.listRecovery().then((r) => { if (r[0]) setRecovery(r[0]); else recoveryDecided.current = true; }).catch(() => { recoveryDecided.current = true; });
+  }, []);
 
   const say = useCallback((t: string) => { setToast(t); window.setTimeout(() => setToast((c) => (c === t ? null : c)), 6000); }, []);
   useEffect(() => { if (state.notice) say(state.notice); }, [state.notice, say]);
@@ -149,6 +165,11 @@ export function App() {
     } catch { /* error already surfaced in the status area */ }
   }, [ensurePreview, loopAudition, monoCheck]);
 
+  const playForCapture = useCallback(async () => {
+    const pv = await ensurePreview();
+    player.play(pv.processed.channels, pv.processed.sampleRate, { loop: false, monoCheck });
+  }, [ensurePreview, monoCheck]);
+
   // Optional auto preview: re-render and play shortly after the user stops editing.
   useEffect(() => {
     if (suppressAuto.current) { suppressAuto.current = false; return; }
@@ -166,10 +187,11 @@ export function App() {
   const { effective, table } = useMemo(() => { try { return applyMappings(recipe); } catch { return { effective: recipe, table: [] }; } }, [recipe]);
   const dirty = isDirty(state);
 
+
   const requestLoad = useCallback((run: () => void) => { if (isDirty(stateRef.current)) setPending({ run }); else run(); }, []);
-  const loadRecipe = useCallback((r: Recipe, presetId: string | null) => {
+  const loadRecipe = useCallback((r: Recipe, presetId: string | null, clean = true) => {
     stop(); suppressAuto.current = true;
-    dispatch({ type: "load", recipe: cloneRecipe(r), presetId });
+    dispatch({ type: "load", recipe: cloneRecipe(r), presetId, clean });
     if (presetId) setRecent((cur) => { const n = [presetId, ...cur.filter((x) => x !== presetId)].slice(0, 12); saveJson("recent", n); return n; });
   }, [stop]);
 
@@ -187,9 +209,20 @@ export function App() {
     } catch (e) { if ((e as DOMException).name !== "AbortError") say((e as Error).message); return false; }
   }, [projectJson, say]);
 
-  const openProjectFile = useCallback(async (file: File) => {
+  // Autosave about two seconds after an edit; clear recovery data once the work is saved or unchanged.
+  useEffect(() => {
+    const d = desktop();
+    if (!d || !recoveryDecided.current) return;
+    const t = window.setTimeout(() => {
+      if (!isDirty(stateRef.current)) { void d.clearRecovery().catch(() => undefined); return; }
+      try { void d.autosave(projectJson()).catch(() => undefined); } catch { /* a missing sample prevents a complete snapshot */ }
+    }, 2000);
+    return () => window.clearTimeout(t);
+  }, [state.revision, dirty, projectJson]);
+
+  const openProjectText = useCallback(async (fileName: string, text: string, skipPrompt = false, dirty = false) => {
     try {
-      const raw = JSON.parse(await file.text());
+      const raw = JSON.parse(text);
       const isProject = raw?.format === "vhsfx-project";
       if (isProject && typeof raw.version === "number" && raw.version > 1) throw new Error("This project was saved by a newer version of the app. Nothing was changed.");
       // Also accepts a bare recipe or an export sidecar (.recipe.json), e.g. one edited by Claude.
@@ -203,9 +236,16 @@ export function App() {
         else if (!getAsset(a.hash)) missing.push(a.originalName);
       }
       if (missing.length) throw new Error(`These samples are missing: ${missing.join(", ")}. Open the project (.vhsfx.json) that contains them. Nothing was opened, and no other sample was substituted.`);
-      requestLoad(() => { loadRecipe(v.recipe!, null); say(`Opened ${file.name}`); });
+      const go = () => { loadRecipe(v.recipe!, null, !dirty); say(`Opened ${fileName}`); };
+      if (skipPrompt) go(); else requestLoad(go);
     } catch (e) { say(e instanceof SyntaxError ? "That file is not valid JSON." : (e as Error).message); }
   }, [loadRecipe, requestLoad, say]);
+  const openProjectFile = useCallback(async (file: File) => openProjectText(file.name, await file.text()), [openProjectText]);
+  const openDialog = useCallback(async () => {
+    const d = desktop();
+    if (!d) { fileInput.current?.click(); return; }
+    try { const r = await d.openProject(); if (!r.canceled && r.text) await openProjectText(r.name ?? "project", r.text); } catch (e) { say((e as Error).message); }
+  }, [openProjectText, say]);
 
   const addSampleLayer = useCallback(async (file: File) => {
     try {
@@ -225,6 +265,16 @@ export function App() {
       say(`Added ${file.name}. Your original file is untouched.`);
     } catch (e) { say(e instanceof ImportError ? e.message : (e as Error).message); }
   }, [edit, say]);
+
+  const startFromTemplate = useCallback(async (file: File) => {
+    const t = pendingTemplate.current;
+    if (!t) return;
+    try {
+      const { ref } = await importWav(file);
+      const recipe = buildTemplate(t, { assetId: "sample1", ref, seconds: ref.frames / ref.sampleRate });
+      requestLoad(() => { loadRecipe(recipe, null); say(`Built “${t.name}” around ${file.name}. Your original file is untouched.`); });
+    } catch (e) { say(e instanceof ImportError ? e.message : (e as Error).message); }
+  }, [loadRecipe, requestLoad, say]);
 
   const addLayer = (kind: Parameters<typeof newLayer>[0]) => {
     if (recipe.layers.length >= 8) { say("A sound can have at most 8 layers."); return; }
@@ -251,7 +301,7 @@ export function App() {
   });
 
   // ---- export
-  const runExport = useCallback(async (o: { variant: number; sfxPrefix: boolean; sidecar: boolean }): Promise<string[]> => {
+  const runExport = useCallback(async (o: { variant: number; sfxPrefix: boolean; sidecar: boolean }): Promise<{ lines: string[]; files: string[] }> => {
     const rec = cloneRecipe(stateRef.current.recipe);
     const s = rec.exportDefaults;
     const client = exportClient.current;
@@ -271,7 +321,7 @@ export function App() {
       out.push(`Saved ${await target.write(written.replace(/\.wav$/i, "") + ".recipe.json", JSON.stringify(sc, null, 2), "application/json")}`);
     }
     for (const w of [...done.warnings, ...processed.report.warnings]) out.push("Note: " + w);
-    return out;
+    return { lines: out, files: [written] };
   }, []);
 
   const savePreset = () => {
@@ -298,7 +348,7 @@ export function App() {
       if (mod && e.key.toLowerCase() === "z" && !typing) { e.preventDefault(); dispatch({ type: e.shiftKey ? "redo" : "undo" }); }
       else if (mod && e.key.toLowerCase() === "y" && !typing) { e.preventDefault(); dispatch({ type: "redo" }); }
       else if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); void saveProject(); }
-      else if (mod && e.key.toLowerCase() === "o") { e.preventDefault(); fileInput.current?.click(); }
+      else if (mod && e.key.toLowerCase() === "o") { e.preventDefault(); void openDialogRef.current(); }
       else if (mod && e.key.toLowerCase() === "e") { e.preventDefault(); setDialog("export"); }
       else if (mod && e.key.toLowerCase() === "f") { e.preventDefault(); searchRef.current?.focus(); }
       else if (mod && e.shiftKey && e.key.toLowerCase() === "p") { e.preventDefault(); setDialog("palette"); }
@@ -307,6 +357,7 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [play, saveProject]);
+  const openDialogRef = useRef(openDialog); openDialogRef.current = openDialog;
   const dialogOpen = useRef(false); dialogOpen.current = dialog !== null || pending !== null;
 
   useEffect(() => {
@@ -354,7 +405,7 @@ export function App() {
     { id: "undo", label: "Undo", keywords: "revert back", run: () => dispatch({ type: "undo" }) },
     { id: "redo", label: "Redo", keywords: "forward", run: () => dispatch({ type: "redo" }) },
     { id: "save", label: "Save project", keywords: "write file", run: () => void saveProject() },
-    { id: "open", label: "Open project…", keywords: "load file", run: () => fileInput.current?.click() },
+    { id: "open", label: "Open project…", keywords: "load file", run: () => void openDialog() },
     { id: "preset", label: "Save as user preset…", keywords: "library favourite my presets", run: () => setDialog("savePreset") },
     { id: "bake", label: "Bake controls into values", keywords: "macros mappings resolve", run: () => edit((d) => { Object.assign(d, bakeMappings(d)); }), enabled: recipe.mappings.length > 0 },
     { id: "help", label: "Help and glossary", keywords: "shortcuts unreal checklist", run: () => setDialog("help") },
@@ -368,7 +419,7 @@ export function App() {
         <div className="doc-title" aria-live="polite">{recipe.name}{dirty && <span className="dirty" title="Unsaved changes" aria-label="Unsaved changes"> ●</span>}</div>
         <div className="row">
           <button className="btn" onClick={() => requestLoad(() => loadRecipe(blankRecipe(), null))}>New</button>
-          <button className="btn" onClick={() => fileInput.current?.click()}>Open</button>
+          <button className="btn" onClick={() => void openDialog()}>Open</button>
           <button className="btn" onClick={() => void saveProject()}>Save</button>
           <span className="sep" />
           <button className="btn" disabled={!state.past.length} onClick={() => dispatch({ type: "undo" })} title="Undo (Ctrl+Z)">Undo</button>
@@ -382,11 +433,13 @@ export function App() {
           <button className="btn" onClick={() => setDialog("help")}>Help</button>
         </div>
         <input ref={fileInput} type="file" accept=".json,application/json" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void openProjectFile(f); e.target.value = ""; }} />
+        <input ref={templateInput} type="file" accept=".wav,audio/wav,audio/x-wav" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void startFromTemplate(f); e.target.value = ""; }} />
         <input ref={sampleInput} type="file" accept=".wav,audio/wav,audio/x-wav" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void addSampleLayer(f); e.target.value = ""; }} />
       </header>
 
       <div className={"main" + (advanced ? " with-inspector" : "")}>
         <Browser factory={FACTORY_PRESETS} user={userPresets} favorites={favorites} recent={recent} query={query} filter={filter} family={family} currentId={state.presetId}
+          onPickTemplate={(t) => { pendingTemplate.current = t; templateInput.current?.click(); }}
           onQuery={setQuery} onFilter={setFilter} onFamily={setFamily} searchRef={searchRef}
           onPick={(r) => requestLoad(() => loadRecipe(r, r.id))}
           onFavorite={(id) => setFavorites((f) => { const n = f.includes(id) ? f.filter((x) => x !== id) : [...f, id]; saveJson("favorites", n); return n; })}
@@ -405,6 +458,11 @@ export function App() {
             </div>
           </section>
 
+          <div className="tabs" role="tablist" aria-label="Controls">
+            <button role="tab" aria-selected={tab === "controls"} className={tab === "controls" ? "on" : ""} onClick={() => setTab("controls")}>Controls</button>
+            <button role="tab" aria-selected={tab === "perform"} className={tab === "perform" ? "on" : ""} onClick={() => setTab("perform")}>Perform{recipe.perform?.enabled ? " ●" : ""}</button>
+          </div>
+          {tab === "controls" ? (
           <section className="macros" aria-label="Main controls">
             {recipe.macros.length === 0 && <p className="muted">This sound has no macro controls. Switch to Advanced to edit its layers.</p>}
             {recipe.macros.map((m) => (
@@ -415,6 +473,11 @@ export function App() {
               </div>
             ))}
           </section>
+          ) : (
+          <section className="macros perform-section" aria-label="Perform">
+            <PerformPanel recipe={recipe} onPlayForCapture={playForCapture} timeOffset={recipe.mode === "oneShot" ? recipe.master.crop.startSeconds : 0} onEdit={edit} onNotice={say} />
+          </section>
+          )}
 
           <section className="wave-panel">
             <Waveform samples={preview?.display ?? null} sampleRate={preview?.processed.sampleRate ?? 48000} gain={preview ? Math.pow(10, preview.report.appliedGainDb / 20) : 1}
@@ -510,11 +573,21 @@ export function App() {
         </div>
       </footer>
 
+      {recovery && (
+        <Modal title="Recover unsaved work?" onClose={() => { recoveryDecided.current = true; setRecovery(null); }}>
+          <p>The app closed with unsaved changes. A snapshot from {new Date(recovery.time).toLocaleString()} is available.</p>
+          <div className="row">
+            <button className="btn primary" onClick={async () => { const d = desktop()!; recoveryDecided.current = true; setRecovery(null); try { await openProjectText("recovered work", await d.readRecovery(recovery.id), true, true); } catch (e) { say((e as Error).message); } }}>Restore</button>
+            <button className="btn" onClick={() => { recoveryDecided.current = true; setRecovery(null); void desktop()!.clearRecovery(); }}>Dismiss</button>
+          </div>
+        </Modal>
+      )}
       {toast && <div className="toast" role="status">{toast}</div>}
 
       {dialog === "export" && (
         <ExportDialog recipe={recipe} report={preview?.report ?? null} previewStale={stale || !preview} onClose={() => setDialog(null)} onSettings={setExport}
           onRestoreLayers={() => edit((d) => { for (const l of d.layers) { l.mute = false; l.solo = false; } })} onRun={runExport}
+          onShowInFolder={desktop() ? (n) => void desktop()!.showInFolder(n).catch((e: Error) => say(e.message)) : undefined}
           folderName={folderName} canPickFolder={canPickFolder()} onPickFolder={() => void pickExportFolder().then(() => setFolderName(currentFolderName()))} />
       )}
       {dialog === "help" && <Help onClose={() => setDialog(null)} onTour={() => setDialog("tour")} />}

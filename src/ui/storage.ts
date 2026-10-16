@@ -1,5 +1,6 @@
 /** Browser storage is a per-viewer convenience only; every access is guarded and the app works without it. */
 import { validateRecipe } from "../domain/recipe";
+import { desktop } from "./platform";
 import type { Recipe } from "../domain/schema";
 
 export function safeGet(key: string): string | null {
@@ -36,18 +37,42 @@ type Dir = {
 };
 let dir: Dir | null = null;
 
-export const canPickFolder = () => typeof (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker === "function";
-export const currentFolderName = () => dir?.name ?? null;
+let desktopFolder: string | null = null;
+export const canPickFolder = () => !!desktop() || typeof (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker === "function";
+export const currentFolderName = () => (desktop() ? desktopFolder : dir?.name ?? null);
+/** Desktop shell: learn which export folder is already set (test seam or earlier choice). */
+export async function initDesktop(): Promise<void> {
+  const d = desktop();
+  if (d) desktopFolder = (await d.info()).exportFolder;
+}
 
 /** Must be called from a click handler (the browser requires a user gesture to open the folder picker). */
 export async function pickExportFolder(): Promise<boolean> {
+  const d = desktop();
+  if (d) { const r = await d.pickFolder(); desktopFolder = r.folder; return !!r.folder; }
   const w = window as unknown as { showDirectoryPicker?: (o: unknown) => Promise<Dir> };
   if (!w.showDirectoryPicker) return false;
   try { dir = await w.showDirectoryPicker({ mode: "readwrite", id: "vhsfx-export" }); return true; }
   catch (e) { if ((e as DOMException).name === "AbortError") return false; throw e; }
 }
 
+async function toBytes(data: BlobPart): Promise<Uint8Array | string> {
+  if (typeof data === "string") return data;
+  if (data instanceof Uint8Array) return data;
+  return new Uint8Array(await new Blob([data]).arrayBuffer());
+}
+
 export function exportTarget(): ExportTarget {
+  const dk = desktop();
+  if (dk) {
+    return {
+      folder: desktopFolder,
+      async write(name, data) {
+        if (!desktopFolder) { const r = await dk.pickFolder(); desktopFolder = r.folder; if (!r.folder) throw new Error("No export folder was chosen."); }
+        return (await dk.writeExport(name, await toBytes(data))).name;
+      },
+    };
+  }
   const d = dir;
   if (d) {
     return {
@@ -83,6 +108,12 @@ export function exportTarget(): ExportTarget {
 
 /** One-off save with the native picker (project files), falling back to a download. */
 export async function saveFile(name: string, data: BlobPart, mime: string): Promise<string> {
+  const dk = desktop();
+  if (dk) {
+    const r = await dk.saveProject(name, String(data));
+    if (r.canceled || !r.name) throw new DOMException("Save cancelled", "AbortError");
+    return r.name;
+  }
   const w = window as unknown as { showSaveFilePicker?: (o: unknown) => Promise<{ name: string; createWritable: () => Promise<{ write: (b: Blob) => Promise<void>; close: () => Promise<void> }> }> };
   if (w.showSaveFilePicker) {
     const h = await w.showSaveFilePicker({ suggestedName: name });

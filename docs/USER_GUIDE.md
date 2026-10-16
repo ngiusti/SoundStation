@@ -27,6 +27,15 @@ Recordings: WAV only (16/24-bit PCM or 32-bit float, mono/stereo, up to 60 s). Y
 ## Loops
 Loop sounds (e.g. Abandoned corridor) render exactly the loop length with a seam crossfade. The panel under the waveform shows the seam numbers. They cannot prove a good loop: press **Listen across seam**, which plays the end joined to the start four times.
 
+## Perform (XY pad)
+Open the **Perform** tab. Pick which two main controls the pad drives (e.g. Speed across, Strain up). Dragging the pad only sets those two controls. To record motion: press **Capture motion**; the sound plays once and you move the pad (or use its arrow keys, or the X/Y sliders) while it plays; it stops at the end, or press **Stop capture**; **Esc cancels** and changes nothing. The recorded motion is saved with the sound and replays exactly; edit the two curves (drag points, double-click to add or remove, or type numbers) or start from Rise, Fall, Pulse or Swell. Untick **Use recorded motion** to hear the static sound. Motion changes level, oscillator pitch and filter cutoff over time; anything else a control drives keeps its static value.
+
+## Your own recordings (templates)
+In the library choose **Add your recording**, pick a template (single footstep, footsteps, firearm mechanism, metal scrape, cloth and gear) and a WAV file. The app builds a sound around it with a few synthetic support layers. No audio is included with the app.
+
+## Desktop app
+Everything above works the same. Extra: **Choose folder** in Export sets where files go (no overwriting; a number is added), **Show in Folder** appears after an export, and if the app closes with unsaved work it offers to **recover** it next time (a snapshot is saved about two seconds after each edit).
+
 ## Saving
 - **Save / Open** use a single `.vhsfx.json` file with any imported samples embedded. **Open** also accepts a bare recipe or an exported `.recipe.json` (for example one Claude edited).
 - **Save Preset** stores a copy in *My presets* in this browser. Factory presets are never changed.

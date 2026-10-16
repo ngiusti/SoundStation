@@ -27,6 +27,8 @@ export interface RenderOptions {
   tailMode?: "include" | "fixed";
   tailMaxSeconds?: number;
   signal?: { cancelled: boolean };
+  /** Skip crop and edge fades so a UI can show the whole timeline and apply them itself with cropAndFade(). */
+  rawTimeline?: boolean;
 }
 
 export interface RenderOutput {
@@ -173,6 +175,21 @@ function renderLayer(layer: Layer, c: LayerCtx): { chans: Float32Array[]; startF
   return { chans, startFrame };
 }
 
+/** Reversible crop + edge fades applied after the mix (never to source assets). One-shots only. */
+export function cropAndFade(
+  l: Float32Array, r: Float32Array, sr: number, master: Pick<Recipe["master"], "crop" | "fadeInMs" | "fadeOutMs">,
+): [Float32Array, Float32Array] {
+  const cs = Math.min(l.length - 1, Math.round(master.crop.startSeconds * sr));
+  const ce = master.crop.endSeconds === null ? l.length : Math.min(l.length, Math.round(master.crop.endSeconds * sr));
+  if (ce <= cs) throw new RenderError("invalid", "Crop end must be after crop start.");
+  const outL = l.slice(cs, ce), outR = r.slice(cs, ce);
+  const fi = Math.round((master.fadeInMs / 1000) * sr), fo = Math.round((master.fadeOutMs / 1000) * sr);
+  const n = outL.length;
+  for (let i = 0; i < Math.min(fi, n); i++) { const g = i / fi; outL[i] *= g; outR[i] *= g; }
+  for (let i = 0; i < Math.min(fo, n); i++) { const g = i / fo; outL[n - 1 - i] *= g; outR[n - 1 - i] *= g; }
+  return [outL, outR];
+}
+
 export function renderRecipe(recipe: Recipe, opts: RenderOptions = {}): RenderOutput {
   const sr = opts.sampleRate ?? recipe.exportDefaults.sampleRate;
   const warnings: string[] = [];
@@ -273,14 +290,8 @@ export function renderRecipe(recipe: Recipe, opts: RenderOptions = {}): RenderOu
         if (tailEnergy > floor * 4) { tailTruncated = true; warnings.push("This tail is being cut off. Include more tail or shorten Space."); }
       }
     }
-    const cs = Math.min(end - 1, Math.round(r.master.crop.startSeconds * sr));
-    const ce = r.master.crop.endSeconds === null ? end : Math.min(end, Math.round(r.master.crop.endSeconds * sr));
-    if (ce <= cs) throw new RenderError("invalid", "Crop end must be after crop start.");
-    outL = L.slice(cs, ce); outR = R.slice(cs, ce);
-    const fi = Math.round((r.master.fadeInMs / 1000) * sr), fo = Math.round((r.master.fadeOutMs / 1000) * sr);
-    const n = outL.length;
-    for (let i = 0; i < Math.min(fi, n); i++) { const g = i / fi; outL[i] *= g; outR[i] *= g; }
-    for (let i = 0; i < Math.min(fo, n); i++) { const g = i / fo; outL[n - 1 - i] *= g; outR[n - 1 - i] *= g; }
+    outL = L.slice(0, end); outR = R.slice(0, end);
+    if (!opts.rawTimeline) [outL, outR] = cropAndFade(outL, outR, sr, r.master);
   }
 
   // Safety net: never let NaN/Infinity out of the engine.

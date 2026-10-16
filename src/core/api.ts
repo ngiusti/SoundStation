@@ -16,6 +16,7 @@ import type { AssetProvider } from "../audio/sources";
 import { analyze, type Analysis } from "../audio/analysis";
 import { encodeOutput, processOutput } from "../export/output";
 import { decodeWav, WavError } from "../export/wav";
+import { sidecarFor } from "../export/sidecar";
 
 export class CliError extends Error {
   constructor(public exitCode: 2 | 3 | 4 | 5 | 130, message: string) { super(message); }
@@ -39,14 +40,29 @@ export function listPresets(query?: string) {
   }));
 }
 
-export function loadRecipe(src: RecipeSource): { recipe: Recipe; baseDir: string } {
+/** Accepts a bare recipe, an app project file (.vhsfx.json with embedded samples) or an export sidecar (.recipe.json). */
+export function unwrapRecipeFile(raw: unknown): { recipe: unknown; embedded?: Map<string, Uint8Array> } {
+  if (raw && typeof raw === "object") {
+    const o = raw as { format?: string; tool?: string; recipe?: unknown; assets?: { hash: string; dataBase64: string }[] };
+    if (o.format === "vhsfx-project" && o.recipe) {
+      const embedded = new Map<string, Uint8Array>();
+      for (const a of o.assets ?? []) if (a?.hash && typeof a.dataBase64 === "string") embedded.set(a.hash, new Uint8Array(Buffer.from(a.dataBase64, "base64")));
+      return { recipe: o.recipe, embedded };
+    }
+    if (o.tool === "vh-sfx-lab" && o.recipe) return { recipe: o.recipe };
+  }
+  return { recipe: raw };
+}
+
+export function loadRecipe(src: RecipeSource): { recipe: Recipe; baseDir: string; embedded?: Map<string, Uint8Array> } {
   let raw: unknown;
   let baseDir = process.cwd();
-  if (src.recipe !== undefined) raw = src.recipe;
+  let embedded: Map<string, Uint8Array> | undefined;
+  if (src.recipe !== undefined) { const u = unwrapRecipeFile(src.recipe); raw = u.recipe; embedded = u.embedded; }
   else if (src.recipePath) {
     const p = resolve(src.recipePath);
     if (!existsSync(p)) throw new CliError(2, `Recipe file not found: ${src.recipePath}`);
-    try { raw = JSON.parse(readFileSync(p, "utf8")); } catch (e) { throw new CliError(2, `Recipe is not valid JSON: ${(e as Error).message}`); }
+    try { const u = unwrapRecipeFile(JSON.parse(readFileSync(p, "utf8"))); raw = u.recipe; embedded = u.embedded; } catch (e) { throw new CliError(2, `Recipe is not valid JSON: ${(e as Error).message}`); }
     baseDir = dirname(p);
   } else if (src.preset) {
     const pr = getPreset(src.preset);
@@ -63,19 +79,20 @@ export function loadRecipe(src: RecipeSource): { recipe: Recipe; baseDir: string
     if (!Number.isInteger(src.seed) || src.seed < 0 || src.seed > 0xffffffff) throw new CliError(2, "Seed must be an integer between 0 and 4294967295.");
     recipe = { ...recipe, seed: src.seed };
   }
-  return { recipe, baseDir };
+  return { recipe, baseDir, embedded };
 }
 
 /** Assets live in <projectDir>/assets/<sha256>.wav, referenced by hash. Missing or altered files fail loudly. */
-export function directoryAssetProvider(recipe: Recipe, baseDir: string): AssetProvider {
+export function directoryAssetProvider(recipe: Recipe, baseDir: string, embedded?: Map<string, Uint8Array>): AssetProvider {
   const cache = new Map<string, ReturnType<typeof decodeWav>>();
   return (id) => {
     const ref = recipe.assets.find((a) => a.id === id);
     if (!ref) return undefined;
     if (cache.has(id)) return cache.get(id);
     const file = join(baseDir, "assets", `${ref.hash}.wav`);
-    if (!existsSync(file)) return undefined;
-    const bytes = new Uint8Array(readFileSync(file));
+    const emb = embedded?.get(ref.hash);
+    if (!emb && !existsSync(file)) return undefined;
+    const bytes = emb ?? new Uint8Array(readFileSync(file));
     if (sha256Hex(bytes) !== ref.hash) throw new CliError(3, `Asset "${ref.originalName}" does not match its saved hash; it was changed or corrupted.`);
     const d = decodeWav(bytes);
     cache.set(id, d);
@@ -120,10 +137,10 @@ export function exportSettingsFor(recipe: Recipe, req: Pick<RenderRequest, "samp
   };
 }
 
-export function renderToBytes(recipe: Recipe, baseDir: string, settings: ExportSettings) {
+export function renderToBytes(recipe: Recipe, baseDir: string, settings: ExportSettings, embedded?: Map<string, Uint8Array>) {
   let rendered: RenderOutput;
   try {
-    rendered = renderRecipe(recipe, { sampleRate: settings.sampleRate, assets: directoryAssetProvider(recipe, baseDir), tailMaxSeconds: settings.tailMaxSeconds, tailMode: settings.tailMode });
+    rendered = renderRecipe(recipe, { sampleRate: settings.sampleRate, assets: directoryAssetProvider(recipe, baseDir, embedded), tailMaxSeconds: settings.tailMaxSeconds, tailMode: settings.tailMode });
   } catch (e) {
     if (e instanceof CliError) throw e;
     if (e instanceof RenderError) throw new CliError(e.code === "asset" ? 3 : 4, e.message);
@@ -149,20 +166,10 @@ export function atomicWrite(path: string, data: Uint8Array | string, overwrite: 
   }
 }
 
-export function sidecarFor(recipe: Recipe, settings: ExportSettings, r: Pick<RenderResultJson, "frames" | "audioSha256" | "output" | "loop" | "warnings">, extra: Record<string, unknown> = {}) {
-  return {
-    tool: "vh-sfx-lab", engineVersion: ENGINE_VERSION, recipeId: recipe.id, seed: recipe.seed,
-    sampleRate: settings.sampleRate, channels: settings.channels, encoding: settings.encoding,
-    frames: r.frames, loop: r.loop, audioSha256: r.audioSha256, output: r.output, warnings: r.warnings,
-    sourceAssets: recipe.assets.map((a) => ({ id: a.id, hash: a.hash, originalName: a.originalName, license: a.license })),
-    ...extra, recipe,
-  };
-}
-
 export function renderToFile(req: RenderRequest): RenderResultJson {
-  const { recipe, baseDir } = loadRecipe(req);
+  const { recipe, baseDir, embedded } = loadRecipe(req);
   const settings = exportSettingsFor(recipe, req);
-  const { rendered, processed, bytes, analysis } = renderToBytes(recipe, baseDir, settings);
+  const { rendered, processed, bytes, analysis } = renderToBytes(recipe, baseDir, settings, embedded);
   atomicWrite(req.out, bytes, !!req.overwrite);
   const result: RenderResultJson = {
     ok: true, file: req.out, recipeId: recipe.id, seed: recipe.seed, engineVersion: ENGINE_VERSION,
@@ -250,7 +257,7 @@ export function renderVariations(req: VariationRequest) {
   if (!Number.isInteger(req.count) || req.count < 1 || req.count > 100) throw new CliError(2, "Count must be a whole number from 1 to 100.");
   const strength = typeof req.strength === "number" ? req.strength : STRENGTHS[req.strength];
   if (strength === undefined || !(strength >= 0 && strength <= 1)) throw new CliError(2, "Strength must be subtle, moderate, bold or a number from 0 to 1.");
-  const { recipe: parent, baseDir } = loadRecipe(req);
+  const { recipe: parent, baseDir, embedded } = loadRecipe(req);
   for (const id of req.lock ?? []) if (!parent.macros.some((m) => m.id === id)) throw new CliError(2, `Cannot lock unknown macro "${id}".`);
   const lock = new Set(req.lock ?? []);
   const settings = exportSettingsFor(parent, req);
@@ -261,7 +268,7 @@ export function renderVariations(req: VariationRequest) {
     const { recipe, deviations } = resolveCandidate(parent, i, strength, lock);
     const name = variationFileName(parent, i);
     try {
-      const { rendered, processed, bytes, analysis } = renderToBytes(recipe, baseDir, settings);
+      const { rendered, processed, bytes, analysis } = renderToBytes(recipe, baseDir, settings, embedded);
       const out = join(req.outDir, name);
       atomicWrite(out, bytes, !!req.overwrite);
       const entry = {

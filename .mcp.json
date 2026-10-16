@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "vh-sfx-lab": {
-      "command": "npx",
-      "args": ["tsx", "src/mcp/server.ts"]
+      "command": "node",
+      "args": ["node_modules/tsx/dist/cli.mjs", "src/mcp/server.ts"]
     }
   }
 }

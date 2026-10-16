@@ -1,9 +1,16 @@
 import { parseRecipeOrThrow } from "../domain/recipe";
 import type { Recipe } from "../domain/schema";
 import { HERO_INPUTS } from "./heroes";
+import * as A from "./family-a";
+import * as B from "./family-b";
+import * as C from "./family-c";
+import * as D from "./family-d";
+
+const FAMILY_ORDER = ["interface", "energy-weapons", "machinery", "doors", "atmosphere", "material-impacts", "communications", "motion"];
+const ALL_INPUTS = [...HERO_INPUTS, ...Object.values(A), ...Object.values(B), ...Object.values(C), ...Object.values(D)];
 
 /** Factory presets are validated at load; a broken preset fails loudly instead of at render time. */
-export const FACTORY_PRESETS: Recipe[] = HERO_INPUTS.map((p) => parseRecipeOrThrow(p));
+export const FACTORY_PRESETS: Recipe[] = ALL_INPUTS.map((p) => parseRecipeOrThrow(p)).sort((a, b) => FAMILY_ORDER.indexOf(a.family) - FAMILY_ORDER.indexOf(b.family));
 
 const SYNONYMS: Record<string, string[]> = {
   gun: ["weapon", "pistol", "shot", "blaster"], weapon: ["gun"], spaceship: ["ship"], ship: ["spaceship"],

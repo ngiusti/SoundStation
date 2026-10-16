@@ -215,6 +215,16 @@ export const AssetRefSchema = z.object({
 });
 export type AssetRef = z.infer<typeof AssetRefSchema>;
 
+/** Motion for the XY performance pad: two macro value curves (0-100) over recipe time. */
+export const PerformSchema = z.object({
+  enabled: z.boolean().default(false),
+  xMacro: id,
+  yMacro: id,
+  xCurve: CurveSchema.refine((c) => c.every((p) => p[1] >= 0 && p[1] <= 100), "motion values must be 0-100"),
+  yCurve: CurveSchema.refine((c) => c.every((p) => p[1] >= 0 && p[1] <= 100), "motion values must be 0-100"),
+});
+export type Perform = z.infer<typeof PerformSchema>;
+
 export const RecipeSchema = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION),
   engineVersion: z.string(),
@@ -233,6 +243,7 @@ export const RecipeSchema = z.object({
   layers: z.array(LayerSchema).min(1).max(MAX_LAYERS),
   macros: z.array(MacroSchema).max(6).default([]),
   mappings: z.array(MappingSchema).max(64).default([]),
+  perform: PerformSchema.optional(),
   assets: z.array(AssetRefSchema).max(32).default([]),
   master: MasterSchema.default({
     gainDb: 0,

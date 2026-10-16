@@ -67,7 +67,7 @@ export function resolvePath(recipe: Recipe, target: string): ResolvedPath | null
   return { parent: cur as Record<string, unknown>, key, value };
 }
 
-function shape(curve: Mapping["curve"], n: number): number {
+export function shape(curve: Mapping["curve"], n: number): number {
   switch (curve) {
     case "easeIn": return n * n;
     case "easeOut": return 1 - (1 - n) * (1 - n);

@@ -434,7 +434,7 @@ export function App() {
             {preview?.analysis.notes.map((w) => <p key={w} className="warn small">{w}</p>)}
             {preview?.analysis.seam && (
               <p className={"small " + (preview.analysis.seam.warning ? "warn" : "muted")}>
-                Loop seam: jump {preview.analysis.seam.boundaryJump} ({preview.analysis.seam.jumpRatio}× a typical sample step), level difference {preview.analysis.seam.windowLevelDiffDb} dB between the last and first 50 ms. {preview.analysis.seam.warning ?? "No abrupt step found, but numbers cannot prove a good loop. Use “Listen across seam”."}
+                Loop seam: jump {preview.analysis.seam.boundaryJump} ({preview.analysis.seam.jumpRatio}× a typical sample step), level step {preview.analysis.seam.windowLevelDiffDb} dB between the last and first 50 ms (typical step elsewhere {preview.analysis.seam.typicalWindowStepDb} dB). {preview.analysis.seam.warning ?? "No abrupt step found, but numbers cannot prove a good loop. Use “Listen across seam”."}
               </p>
             )}
             {soloed.length > 0 && <p className="small solo-note">Solo is on for: {soloed.map((l) => l.name).join(", ")}. Exports are made as heard.</p>}

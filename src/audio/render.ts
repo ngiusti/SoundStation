@@ -12,6 +12,7 @@ import {
   type AssetProvider,
 } from "./sources";
 import { renderReverb } from "./reverb";
+import { buildLayerAutomation } from "./perform";
 
 export const MEMORY_BUDGET_BYTES = 512 * 1024 * 1024;
 const TAIL_FLOOR_DB = -72;
@@ -65,7 +66,7 @@ function estimateTail(r: Recipe, layers: Layer[]): number {
 
 interface LayerCtx {
   r: Recipe; sr: number; total: number; origin: number; loop: boolean; cycle: number;
-  assets?: AssetProvider; warnings: string[];
+  assets?: AssetProvider; warnings: string[]; perfWarnings: Set<string>;
 }
 
 function renderLayer(layer: Layer, c: LayerCtx): { chans: Float32Array[]; startFrame: number } {
@@ -79,9 +80,17 @@ function renderLayer(layer: Layer, c: LayerCtx): { chans: Float32Array[]; startF
   const tOffset = c.loop ? c.origin + startFrame / sr : 0;
 
   const amp = sampleCurve(layer.amplitudeCurve, activeFrames, sr, scale, c.loop ? c.cycle : 0, tOffset);
-  const pitch = layer.pitchCurveSemitones
+  let pitch = layer.pitchCurveSemitones
     ? sampleCurve(layer.pitchCurveSemitones, activeFrames, sr, scale, c.loop ? c.cycle : 0, tOffset)
     : null;
+  // XY-pad motion (only when the recipe has enabled perform data). Time axis: recipe time.
+  const autoTime = c.loop ? tOffset : layer.startSeconds;
+  const auto = buildLayerAutomation(r, layer, bufFrames, sr, autoTime, c.loop ? c.cycle : 0, c.perfWarnings);
+  if (auto?.pitchSemis) {
+    const p2 = new Float32Array(activeFrames);
+    for (let i = 0; i < activeFrames; i++) p2[i] = (pitch ? pitch[i] : 0) + auto.pitchSemis[i];
+    pitch = p2;
+  }
 
   const src = layer.source;
   let chans: Float32Array[];
@@ -99,9 +108,12 @@ function renderLayer(layer: Layer, c: LayerCtx): { chans: Float32Array[]; startF
     case "noise":
       chans = [generateNoise(src, activeFrames, stream(r.seed, layer.id, "noise"))];
       break;
-    case "resonantImpact":
-      chans = [generateImpact(src, activeFrames, sr, stream(r.seed, layer.id, "impact"))];
+    case "resonantImpact": {
+      // Time stretch also scales ring times, so "damping" macros on timeScale really shorten the ring.
+      const scaled = scale === 1 ? src : { ...src, modes: src.modes.map((m) => ({ ...m, decaySeconds: Math.min(8, Math.max(0.003, m.decaySeconds * scale)) })) };
+      chans = [generateImpact(scaled, activeFrames, sr, stream(r.seed, layer.id, "impact"))];
       break;
+    }
     case "eventSequence":
       chans = [generateEvents(src, activeFrames, sr, r.seed, layer.id)];
       break;
@@ -117,6 +129,7 @@ function renderLayer(layer: Layer, c: LayerCtx): { chans: Float32Array[]; startF
   for (const ch of chans) {
     for (let i = 0; i < activeFrames; i++) {
       let g = amp[i];
+      if (auto?.gainDb) g *= Math.pow(10, auto.gainDb[i] / 20);
       if (layer.tremolo) {
         const t = i / sr + tOffset;
         g *= 1 - layer.tremolo.depth * (0.5 - 0.5 * Math.sin(2 * Math.PI * layer.tremolo.rateHz * t));
@@ -135,9 +148,12 @@ function renderLayer(layer: Layer, c: LayerCtx): { chans: Float32Array[]; startF
   // Filters (cutoff may move over time).
   for (const f of layer.filters) {
     if (f.bypass) continue;
-    const curve = f.cutoffCurveOctaves
+    let curve = f.cutoffCurveOctaves
       ? sampleCurve(f.cutoffCurveOctaves, bufFrames, sr, scale, c.loop ? c.cycle : 0, tOffset)
       : null;
+    const fi = layer.filters.indexOf(f);
+    const motion = auto?.cutoffOct.get(fi);
+    if (motion) { const m2 = new Float32Array(bufFrames); for (let i = 0; i < bufFrames; i++) m2[i] = (curve ? curve[i] : 0) + motion[i]; curve = m2; }
     for (const ch of chans) {
       const bq = new Biquad();
       bq.set(f.type, f.cutoffHz, f.q, sr);
@@ -224,7 +240,7 @@ export function renderRecipe(recipe: Recipe, opts: RenderOptions = {}): RenderOu
 
   const L = new Float32Array(total), R = new Float32Array(total);
   const space = new Float32Array(total);
-  const ctx: LayerCtx = { r, sr, total, origin, loop, cycle: r.durationSeconds, assets: opts.assets, warnings };
+  const ctx: LayerCtx = { r, sr, total, origin, loop, cycle: r.durationSeconds, assets: opts.assets, warnings, perfWarnings: new Set() };
   for (const layer of layers) {
     if (opts.signal?.cancelled) throw new RenderError("invalid", "cancelled");
     const { chans, startFrame } = renderLayer(layer, ctx);
@@ -293,6 +309,8 @@ export function renderRecipe(recipe: Recipe, opts: RenderOptions = {}): RenderOu
     outL = L.slice(0, end); outR = R.slice(0, end);
     if (!opts.rawTimeline) [outL, outR] = cropAndFade(outL, outR, sr, r.master);
   }
+
+  for (const w of ctx.perfWarnings) warnings.push(w);
 
   // Safety net: never let NaN/Infinity out of the engine.
   let bad = 0;

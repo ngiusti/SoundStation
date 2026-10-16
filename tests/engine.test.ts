@@ -30,7 +30,7 @@ describe("random + hash", () => {
 });
 
 describe("recipes", () => {
-  it("all factory presets validate", () => expect(FACTORY_PRESETS.length).toBe(5));
+  it("all factory presets validate", () => expect(FACTORY_PRESETS.length).toBe(40));
   it("rejects bad input with readable errors", () => {
     const bad = cloneRecipe(sidearm()) as unknown as Record<string, unknown>;
     bad.seed = -1;
@@ -59,7 +59,8 @@ describe("recipes", () => {
   });
   it("search handles synonyms and multiple words", () => {
     expect(searchPresets("gun").map((p) => p.id)).toContain("energy-sidearm");
-    expect(searchPresets("hatch heavy").map((p) => p.id)).toEqual(["heavy-bulkhead-close"]);
+    expect(searchPresets("hatch heavy").map((p) => p.id)).toContain("heavy-bulkhead-close");
+    expect(searchPresets("hatch heavy").every((p) => p.family === "doors")).toBe(true);
     expect(searchPresets("zzzz")).toEqual([]);
   });
 });

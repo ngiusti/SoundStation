@@ -46,6 +46,11 @@ export function validateRecipe(input: unknown): ValidationResult {
     else if (!PARAM_BOUNDS[res.key] && (m.min === undefined || m.max === undefined))
       errors.push(`mappings.${m.id}: target "${m.target}" needs explicit min and max`);
   }
+  if (r.perform) {
+    if (!macroIds.has(r.perform.xMacro)) errors.push(`perform: unknown X macro "${r.perform.xMacro}"`);
+    if (!macroIds.has(r.perform.yMacro)) errors.push(`perform: unknown Y macro "${r.perform.yMacro}"`);
+    if (r.perform.xMacro === r.perform.yMacro) errors.push("perform: X and Y must be different macros");
+  }
   if (r.layers.every((l) => l.mute)) errors.push("layers: every layer is muted, the sound would be silent");
   return errors.length ? { ok: false, errors } : { ok: true, recipe: r, errors: [] };
 }

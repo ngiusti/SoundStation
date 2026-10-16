@@ -6,6 +6,8 @@ export interface SeamReport {
   meanFirstDifference: number;
   jumpRatio: number;
   windowLevelDiffDb: number;
+  /** 90th percentile of level steps between neighbouring 50 ms windows elsewhere in the file (natural modulation). */
+  typicalWindowStepDb: number;
   warning: string | null;
 }
 
@@ -132,14 +134,26 @@ export function seamReport(x: Float32Array, sr: number): SeamReport {
   for (let i = 1; i < n; i++) sd += Math.abs(x[i] - x[i - 1]);
   const meanDiff = sd / Math.max(1, n - 1);
   const jump = Math.abs(x[0] - x[n - 1]);
-  const w = Math.min(Math.round(0.05 * sr), Math.floor(n / 4));
-  const rmsOf = (a: number, b: number) => { let e = 0; for (let i = a; i < b; i++) e += x[i] * x[i]; return Math.sqrt(e / Math.max(1, b - a)); };
-  const diffDb = linToDb(rmsOf(0, w)) - linToDb(rmsOf(n - w, n));
+  // Level of consecutive 50 ms windows; the seam pair is (last, first). Smooth modulation also changes level
+  // between neighbouring windows, so the seam step is judged against the file's own typical step.
+  const w = Math.max(16, Math.min(Math.round(0.05 * sr), Math.floor(n / 8)));
+  const count = Math.floor(n / w);
+  const lv: number[] = [];
+  for (let k = 0; k < count; k++) {
+    let e = 0;
+    for (let i = k * w; i < (k + 1) * w; i++) e += x[i] * x[i];
+    lv.push(Math.max(-90, linToDb(Math.sqrt(e / w))));
+  }
+  const steps: number[] = [];
+  for (let k = 1; k < lv.length; k++) steps.push(Math.abs(lv[k] - lv[k - 1]));
+  steps.sort((a, b) => a - b);
+  const typical = steps.length ? steps[Math.floor(steps.length * 0.9)] : 0;
+  const seamDiff = lv.length > 1 ? lv[0] - lv[lv.length - 1] : 0;
   const ratio = meanDiff > 1e-9 ? jump / meanDiff : jump > 1e-6 ? Infinity : 0;
-  const warning = ratio > 6 || Math.abs(diffDb) > 3
+  const warning = ratio > 6 || (Math.abs(seamDiff) > 3 && Math.abs(seamDiff) > 1.5 * typical)
     ? "The loop point looks abrupt compared with the rest of the file. Listen across the seam before trusting it."
     : null;
-  return { boundaryJump: round5(jump), meanFirstDifference: round5(meanDiff), jumpRatio: Number.isFinite(ratio) ? Math.round(ratio * 100) / 100 : 9999, windowLevelDiffDb: round1(diffDb), warning };
+  return { boundaryJump: round5(jump), meanFirstDifference: round5(meanDiff), jumpRatio: Number.isFinite(ratio) ? Math.round(ratio * 100) / 100 : 9999, windowLevelDiffDb: round1(seamDiff), typicalWindowStepDb: round1(typical), warning };
 }
 const round1 = (x: number) => Math.round(x * 10) / 10;
 const round5 = (x: number) => Math.round(x * 1e5) / 1e5;
